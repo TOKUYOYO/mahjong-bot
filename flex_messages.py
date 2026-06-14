@@ -498,27 +498,27 @@ def player_profile_flex(data: dict) -> dict:
 
     # ── 頭像 ──
     avatar_url = data.get("avatar_url", "")
+    first_char = name[0] if name else "?"
     if avatar_url:
+        # 有圖：用 image 元件（LINE 原生支援，aspectMode=cover 自動裁圓）
         avatar_box = {
-            "type": "box", "layout": "vertical",
-            "width": "72px", "height": "72px",
-            "cornerRadius": "36px", "borderWidth": "2px", "borderColor": "#FFFFFF",
-            "contents": [{
-                "type": "image", "url": avatar_url,
-                "size": "full", "aspectMode": "cover", "aspectRatio": "1:1",
-            }],
+            "type": "image",
+            "url": avatar_url,
+            "size": "72px",
+            "aspectMode": "cover",
+            "aspectRatio": "1:1",
         }
     else:
-        first_char = name[0] if name else "?"
+        # 無圖：用大號文字字符代替
         avatar_box = {
-            "type": "box", "layout": "vertical",
-            "width": "72px", "height": "72px",
-            "cornerRadius": "36px", "backgroundColor": "#9B2335",
-            "paddingTop": "16px",
-            "contents": [
-                {"type": "text", "text": first_char, "size": "xxl", "weight": "bold",
-                 "color": "#FFFFFF", "align": "center"},
-            ],
+            "type": "text",
+            "text": first_char,
+            "size": "4xl",
+            "weight": "bold",
+            "color": "#FFFFFF",
+            "gravity": "center",
+            "align": "center",
+            "flex": 0,
         }
 
     m_color = "#0A7C59" if data["month_total"] > 0 else ("#C53030" if data["month_total"] < 0 else "#888888")
