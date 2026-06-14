@@ -76,22 +76,25 @@ def _reply_flex(reply_token: str, alt_text: str, flex_dict: dict) -> None:
     line_bot_api.reply_message(reply_token, FlexSendMessage(alt_text=alt_text, contents=flex_dict))
 
 
-def _reply_zimo_prompt(reply_token: str, player_name: str) -> None:
-    """詢問指定玩家自摸次數（附快速回覆）"""
-    line_bot_api.reply_message(
-        reply_token,
-        TextSendMessage(
-            text=f"⚡ {player_name} 這場自摸幾次？",
-            quick_reply=QuickReply(items=[
-                QuickReplyButton(action=PostbackAction(
-                    label=f"{n}次",
-                    data=f"action=set_zimo&count={n}",
-                    display_text=f"{player_name} 自摸 {n} 次",
-                ))
-                for n in range(6)
-            ]),
-        ),
+def _reply_zimo_prompt(reply_token: str, player_name: str, push_to: str = "") -> None:
+    """詢問指定玩家自摸次數（附快速回覆）
+    push_to: 若有提供 group_id 或 user_id，改用 push_message（reply_token 已被消耗時使用）
+    """
+    msg = TextSendMessage(
+        text=f"⚡ {player_name} 這場自摸幾次？",
+        quick_reply=QuickReply(items=[
+            QuickReplyButton(action=PostbackAction(
+                label=f"{n}次",
+                data=f"action=set_zimo&count={n}",
+                display_text=f"{player_name} 自摸 {n} 次",
+            ))
+            for n in range(6)
+        ]),
     )
+    if push_to:
+        line_bot_api.push_message(push_to, msg)
+    else:
+        line_bot_api.reply_message(reply_token, msg)
 
 
 # ──────────────────────────────────────
@@ -370,7 +373,9 @@ def handle_postback(event):
         state.winds[player] = wind
         state.pending_zimo_player = player
         state.step = "enter_zimo_after_wind"
-        _reply_zimo_prompt(event.reply_token, player)
+        # reply_token 已被 postback 消耗，改用 push
+        push_target = _get_group_id(event) or event.source.user_id
+        _reply_zimo_prompt(event.reply_token, player, push_to=push_target)
 
     # ── 自摸次數（每選完一個風位後立即收，最後一人亦同）──
     elif action == "set_zimo":
@@ -410,7 +415,8 @@ def handle_postback(event):
                 state.winds[last_player] = WIND_ORDER[3]
                 state.pending_zimo_player = last_player
                 state.step = "enter_last_zimo"
-                _reply_zimo_prompt(event.reply_token, last_player)
+                push_target = _get_group_id(event) or event.source.user_id
+                _reply_zimo_prompt(event.reply_token, last_player, push_to=push_target)
             else:
                 # 繼續下一個風位
                 state.step = "assign_winds"
@@ -532,3 +538,40 @@ def handle_message(event):
             _handle_amount_input(event, user_id, text, state); return
         if state.step == "enter_visitor_name":
             _handle_visitor_name(event, user_id, text, state); return
+        if state.step in {"enter_zimo_after_wind", "enter_last_zimo"}:
+            try:
+                count = int(text.strip())
+                if count < 0:
+                    raise ValueError
+            except ValueError:
+                _reply_text(event.reply_token, "請輸入 0–5 的數字，例如：2")
+                return
+            player = state.pending_zimo_player
+            if player in state.selected_players:
+                idx = state.selected_players.index(player)
+                state.zimos[idx] = count
+            if state.step == "enter_last_zimo":
+                state.step = "confirming"
+                players = [
+                    {
+                        "name": state.selected_players[i],
+                        "amount": state.amounts[i],
+                        "wind": state.winds.get(state.selected_players[i], ""),
+                        "zimo": state.zimos[i],
+                    }
+                    for i in range(4)
+                ]
+                _reply_flex(event.reply_token, "確認本場記錄", confirmation_flex(players))
+            else:
+                state.wind_idx += 1
+                if state.wind_idx >= 3:
+                    last_player = next(p for p in state.selected_players if p not in state.winds)
+                    state.winds[last_player] = WIND_ORDER[3]
+                    state.pending_zimo_player = last_player
+                    state.step = "enter_last_zimo"
+                    _reply_zimo_prompt(event.reply_token, last_player)
+                else:
+                    state.step = "assign_winds"
+                    _reply_flex(event.reply_token, f"{WIND_ORDER[state.wind_idx]}風是誰？",
+                                wind_selection_flex(state.selected_players, state.winds, state.wind_idx))
+            return
