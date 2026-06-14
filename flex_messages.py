@@ -513,11 +513,11 @@ def player_profile_flex(data: dict) -> dict:
         avatar_box = {
             "type": "box", "layout": "vertical",
             "width": "72px", "height": "72px",
-            "cornerRadius": "36px", "backgroundColor": "#FFFFFF",
-            "justifyContent": "center", "alignItems": "center",
+            "cornerRadius": "36px", "backgroundColor": "#9B2335",
+            "paddingTop": "16px",
             "contents": [
                 {"type": "text", "text": first_char, "size": "xxl", "weight": "bold",
-                 "color": "#9B2335", "align": "center", "gravity": "center"},
+                 "color": "#FFFFFF", "align": "center"},
             ],
         }
 
