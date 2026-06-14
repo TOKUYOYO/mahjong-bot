@@ -1,0 +1,19 @@
+# 機密 — 絕對不能上傳
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# 系統
+.DS_Store
+*.log
