@@ -25,6 +25,12 @@ app = FastAPI(title="🀄 麻將戰績 Bot")
 _scheduler = start_scheduler()
 
 
+@app.get("/webhook")
+async def webhook_verify():
+    """LINE Verify 用的 GET endpoint"""
+    return PlainTextResponse("OK")
+
+
 @app.post("/webhook")
 async def webhook(request: Request):
     signature = request.headers.get("X-Line-Signature", "")
