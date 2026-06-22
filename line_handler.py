@@ -465,6 +465,9 @@ def handle_message(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
 
+    if "@皮炎" in text:
+        _reply_text(event.reply_token, "甲蝦米破雞掰粽"); return
+
     if text in {"/記帳", "記帳"}:
         _start_record(event, user_id); return
 
