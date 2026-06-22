@@ -373,9 +373,7 @@ def handle_postback(event):
         state.winds[player] = wind
         state.pending_zimo_player = player
         state.step = "enter_zimo_after_wind"
-        # reply_token 已被 postback 消耗，改用 push
-        push_target = _get_group_id(event) or event.source.user_id
-        _reply_zimo_prompt(event.reply_token, player, push_to=push_target)
+        _reply_zimo_prompt(event.reply_token, player)
 
     # ── 自摸次數（每選完一個風位後立即收，最後一人亦同）──
     elif action == "set_zimo":
@@ -415,8 +413,7 @@ def handle_postback(event):
                 state.winds[last_player] = WIND_ORDER[3]
                 state.pending_zimo_player = last_player
                 state.step = "enter_last_zimo"
-                push_target = _get_group_id(event) or event.source.user_id
-                _reply_zimo_prompt(event.reply_token, last_player, push_to=push_target)
+                _reply_zimo_prompt(event.reply_token, last_player)
             else:
                 # 繼續下一個風位
                 state.step = "assign_winds"
