@@ -52,7 +52,7 @@ def calculate_monthly_awards(year: int, month: int, group_id: str = "") -> dict:
         awards["本月債主"] = {
             "emoji": "🏆",
             "player": top[0],
-            "label": f"本月贏 +{top[1]['total']:,} 元",
+            "label": f"當月贏 +{top[1]['total']:,} 元",
         }
 
     # 💣 冠名贊助（輸最多）
@@ -61,7 +61,7 @@ def calculate_monthly_awards(year: int, month: int, group_id: str = "") -> dict:
         awards["冠名贊助"] = {
             "emoji": "💣",
             "player": bottom[0],
-            "label": f"本月輸 {bottom[1]['total']:,} 元",
+            "label": f"當月輸 {bottom[1]['total']:,} 元",
         }
 
     if wl:
@@ -71,7 +71,7 @@ def calculate_monthly_awards(year: int, month: int, group_id: str = "") -> dict:
             awards["嘿嘿嘿"] = {
                 "emoji": "😄",
                 "player": best_wins[0],
-                "label": f"本月贏了 {best_wins[1]['wins']} 場",
+                "label": f"當月贏了 {best_wins[1]['wins']} 場",
             }
 
         # 😢 嚶嚶嚶（敗場最多）
@@ -80,7 +80,7 @@ def calculate_monthly_awards(year: int, month: int, group_id: str = "") -> dict:
             awards["嚶嚶嚶"] = {
                 "emoji": "😢",
                 "player": worst_losses[0],
-                "label": f"本月輸了 {worst_losses[1]['losses']} 場",
+                "label": f"當月輸了 {worst_losses[1]['losses']} 場",
             }
 
     # ⚡ 指上神罷：當月自摸次數最多
@@ -89,7 +89,7 @@ def calculate_monthly_awards(year: int, month: int, group_id: str = "") -> dict:
         awards["指上神罷"] = {
             "emoji": "⚡",
             "player": top_zimo[0],
-            "label": f"本月自摸 {top_zimo[1]['zimo']} 次",
+            "label": f"當月自摸 {top_zimo[1]['zimo']} 次",
         }
 
     return awards

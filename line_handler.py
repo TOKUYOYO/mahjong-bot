@@ -10,6 +10,7 @@ Line Webhook 事件處理。
 """
 
 import logging
+import re
 from datetime import datetime
 
 import pytz
@@ -151,14 +152,21 @@ def _show_monthly_trend(event, query_name: str, year: int | None = None) -> None
     )
 
 
-def _show_awards(event) -> None:
+def _show_awards(event, year: int | None = None, month: int | None = None) -> None:
     now = datetime.now(TW_TZ)
-    gid = _get_group_id(event)
-    awards = calculate_monthly_awards(now.year, now.month, gid)
-    if not awards:
-        _reply_text(event.reply_token, f"🎖 {now.month} 月資料還不夠，無法頒獎！")
+    month = month or now.month
+    if year is None:
+        # 只給月份且大於本月 → 視為去年（例如 1 月查 /頒獎 12）
+        year = now.year - 1 if month > now.month else now.year
+    if not 1 <= month <= 12:
+        _reply_text(event.reply_token, "月份要在 1～12 之間喔！例如：/頒獎 9")
         return
-    _reply_flex(event.reply_token, f"{now.month}月英雄榜", awards_flex(awards, now.year, now.month))
+    gid = _get_group_id(event)
+    awards = calculate_monthly_awards(year, month, gid)
+    if not awards:
+        _reply_text(event.reply_token, f"🎖 {year}年{month}月資料還不夠，無法頒獎！")
+        return
+    _reply_flex(event.reply_token, f"{year}年{month}月英雄榜", awards_flex(awards, year, month))
 
 
 def _show_personal_stats(event, user_id: str) -> None:
@@ -259,6 +267,8 @@ def _show_help(event) -> None:
         "/年排行 2025　查指定年度排行\n"
         "/逐月 [名字]　個人逐月戰績\n"
         "/頒獎　　　　本月英雄榜\n"
+        "/頒獎 9　　　查9月英雄榜\n"
+        "/頒獎 2025 9　查指定年月英雄榜\n"
         "/我的戰績　　個人本月統計\n"
         "/查 [名字]　　查詢玩家個人頁面\n"
         "/加入 [名字]　加入成員清單\n"
@@ -509,8 +519,16 @@ def handle_message(event):
             year = int(parts[2])
         _show_monthly_trend(event, name, year); return
 
-    if text in {"/頒獎", "頒獎"}:
-        _show_awards(event); return
+    if re.fullmatch(r"/?頒獎[\s\d年月/]*", text):
+        # 支援：/頒獎、/頒獎 9、/頒獎9月、/頒獎 2025 9、/頒獎 2025年9月
+        nums = [int(n) for n in re.findall(r"\d+", text)]
+        if len(nums) >= 2:
+            _show_awards(event, year=nums[0], month=nums[1])
+        elif len(nums) == 1:
+            _show_awards(event, month=nums[0])
+        else:
+            _show_awards(event)
+        return
     if text in {"/我的戰績", "我的戰績"}:
         _show_personal_stats(event, user_id); return
     if text in {"/取消", "取消"}:

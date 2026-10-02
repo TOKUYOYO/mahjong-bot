@@ -11,7 +11,7 @@ from fastapi.responses import PlainTextResponse
 from linebot.exceptions import InvalidSignatureError
 
 from line_handler import handler
-from scheduler import start_scheduler
+from scheduler import send_monthly_summary, start_scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,3 +54,9 @@ def root():
 def ping():
     """Render.com keep-alive 或健康檢查"""
     return "pong"
+
+
+@app.post("/cron/monthly")
+def cron_monthly():
+    """GitHub Actions 每月 1 號呼叫：推播上個月月結＆頒獎（已推過的月份會自動跳過）"""
+    return send_monthly_summary()

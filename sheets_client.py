@@ -12,6 +12,9 @@ sessions 工作表欄位（22 欄）：
 
 members 工作表欄位（3 欄）：
   name | line_user_id | joined_date
+
+meta 工作表欄位（2 欄，自動建立）：
+  key | value　　例：awarded:<group_id> | 2026-09（月結已推播到哪個月）
 """
 
 import json
@@ -67,6 +70,37 @@ def _get_client():
 def _get_sheet(sheet_name: str):
     client = _get_client()
     return client.open_by_key(SPREADSHEET_ID).worksheet(sheet_name)
+
+
+# ── Meta（簡單 key/value，存排程狀態）──
+
+SHEET_META = "meta"
+
+
+def _get_meta_sheet():
+    book = _get_client().open_by_key(SPREADSHEET_ID)
+    try:
+        return book.worksheet(SHEET_META)
+    except gspread.WorksheetNotFound:
+        ws = book.add_worksheet(SHEET_META, rows=50, cols=2)
+        ws.append_row(["key", "value"])
+        return ws
+
+
+def get_meta(key: str) -> str | None:
+    for row in _get_meta_sheet().get_all_values()[1:]:
+        if row and row[0] == key:
+            return row[1] if len(row) > 1 else ""
+    return None
+
+
+def set_meta(key: str, value: str) -> None:
+    ws = _get_meta_sheet()
+    for i, row in enumerate(ws.get_all_values()[1:], start=2):
+        if row and row[0] == key:
+            ws.update_cell(i, 2, value)
+            return
+    ws.append_row([key, value])
 
 
 # ── Members ──
