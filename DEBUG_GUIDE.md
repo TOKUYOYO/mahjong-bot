@@ -15,15 +15,16 @@
 
 ```
 mahjong_bot/
-├── main.py              # FastAPI 入口，/webhook POST/GET，/ping
+├── main.py              # FastAPI 入口，/webhook POST/GET，/ping，/cron/monthly
 ├── line_handler.py      # 所有指令與狀態機邏輯
 ├── flex_messages.py     # 所有 Flex Message 建構
 ├── sheets_client.py     # Google Sheets 讀寫（含 5 分鐘快取）
 ├── state_manager.py     # 記帳狀態機（RecordState dataclass）
 ├── awards.py            # 月度頒獎計算
-├── scheduler.py         # APScheduler 每月自動廣播
+├── scheduler.py         # 每月月結＆頒獎推播（meta 表防重複）
 ├── config.py            # 環境變數讀取
 ├── requirements.txt
+├── .github/workflows/monthly-awards.yml  # 每月 1 號觸發 /cron/monthly
 └── .python-version      # 內容：3.11.9（Render 用）
 ```
 
@@ -50,7 +51,7 @@ mahjong_bot/
 | `/逐月 名字` | 個人逐月戰績 |
 | `/查 名字` | 個人頁面（含頭像、生涯最佳、逐月） |
 | `/我的戰績` | 本月個人統計 |
-| `/頒獎` | 本月英雄榜 |
+| `/頒獎` | 本月英雄榜；`/頒獎 9` 查 9 月、`/頒獎 2025 9` 查指定年月 |
 | `/加入 名字` | 加入成員清單 |
 | `/取消` | 取消記帳 |
 | `/說明` | 顯示說明 |
@@ -76,6 +77,15 @@ mahjong_bot/
 
 ---
 
+## 每月自動頒獎
+
+- GitHub Actions（`.github/workflows/monthly-awards.yml`）每月 1 號台灣時間 12:00 與 15:00 先 ping 叫醒 Bot，再 `POST /cron/monthly`
+- Bot 推播「上個月」的月結排行＆英雄榜，成功後在 Sheets 的 `meta` 工作表記 `awarded:<群組ID> = YYYY-MM`，同月不會重複推
+- 漏推時手動補：`curl -X POST https://mahjong-bot-uila.onrender.com/cron/monthly`（只會補上個月），或到 GitHub → Actions → 每月頒獎 → Run workflow
+- workflow 檔不能用 git push 更新（PAT 沒有 `workflow` 權限），要在 GitHub 網頁上編輯
+
+---
+
 ## Render 環境變數（需在 Render Dashboard 設定）
 
 | 變數名 | 說明 |
@@ -95,11 +105,12 @@ mahjong_bot/
 3. 確認 LINE Webhook URL 是 `https://mahjong-bot-uila.onrender.com/webhook`
 
 ### 推 GitHub 失敗（Authentication failed）
-GitHub 不支援密碼，需用 Personal Access Token：
+GitHub 不支援密碼，需用 Personal Access Token。Token 存在 macOS 鑰匙圈，不要寫進 remote 網址：
 ```bash
-git remote set-url origin https://TOKUYOYO:YOUR_TOKEN@github.com/TOKUYOYO/mahjong-bot.git
-git push
+git remote set-url origin https://TOKUYOYO@github.com/TOKUYOYO/mahjong-bot.git
+git push   # 第一次會問密碼，貼上 Token，之後由鑰匙圈記住
 ```
+換新 Token 時：鑰匙圈存取 → 搜尋 github.com → 刪掉舊的，再 push 一次輸入新 Token。
 Token 建立：GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → 勾 `repo`
 
 ### git lock 錯誤
