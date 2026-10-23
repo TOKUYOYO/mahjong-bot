@@ -7,12 +7,14 @@ WIND_ORDER = ["東", "南", "西", "北"]
 
 
 # ─────────────────────────────────────
-# 選人卡
+# 選人卡（依風位：東風是誰？→ 南風是誰？…）
 # ─────────────────────────────────────
 
-def player_selection_flex(members: list[str], selected: list[str], step: int) -> dict:
+def player_selection_flex(members: list[str], selected: list[str]) -> dict:
+    """selected 依風位順序排列，下一個要選的就是 WIND_ORDER[len(selected)]"""
+    current_wind = WIND_ORDER[len(selected)]
     available = [m for m in members if m not in selected]
-    selected_text = "、".join(selected) if selected else "（尚未選擇）"
+    assigned_text = "　".join(f"{WIND_ORDER[i]}：{p}" for i, p in enumerate(selected)) or "（尚未選擇）"
 
     buttons = [
         {
@@ -21,7 +23,7 @@ def player_selection_flex(members: list[str], selected: list[str], step: int) ->
                 "type": "postback",
                 "label": name,
                 "data": f"action=select_player&player={name}",
-                "displayText": f"選了 {name}",
+                "displayText": f"{name} 是 {current_wind}風",
             },
             "style": "link",
             "height": "sm",
@@ -47,62 +49,11 @@ def player_selection_flex(members: list[str], selected: list[str], step: int) ->
         "header": {
             "type": "box",
             "layout": "vertical",
-            "backgroundColor": "#9B2335",
-            "paddingAll": "16px",
-            "contents": [
-                {"type": "text", "text": f"🀄 選擇第 {step} 位玩家", "weight": "bold", "size": "lg", "color": "#FFFFFF"},
-                {"type": "text", "text": f"已選：{selected_text}", "size": "sm", "color": "#FFCCCC", "wrap": True, "margin": "sm"},
-            ],
-        },
-        "body": {"type": "box", "layout": "vertical", "spacing": "xs", "contents": buttons},
-        "footer": {
-            "type": "box", "layout": "vertical",
-            "contents": [{"type": "button", "action": {"type": "postback", "label": "❌ 取消記帳", "data": "action=cancel", "displayText": "取消記帳"}, "style": "secondary", "height": "sm"}],
-        },
-    }
-
-
-# ─────────────────────────────────────
-# 風位選擇卡
-# ─────────────────────────────────────
-
-def wind_selection_flex(selected_players: list[str], winds: dict, wind_idx: int) -> dict:
-    current_wind = WIND_ORDER[wind_idx]
-    available = [p for p in selected_players if p not in winds]
-
-    assigned_parts = []
-    for w in WIND_ORDER[:wind_idx]:
-        for p, pw in winds.items():
-            if pw == w:
-                assigned_parts.append(f"{w}：{p}")
-    assigned_text = "　".join(assigned_parts) if assigned_parts else "（尚未分配）"
-
-    buttons = [
-        {
-            "type": "button",
-            "action": {
-                "type": "postback",
-                "label": player,
-                "data": f"action=assign_wind&wind={current_wind}&player={player}",
-                "displayText": f"{player} 是 {current_wind}風",
-            },
-            "style": "link",
-            "height": "sm",
-        }
-        for player in available
-    ]
-
-    return {
-        "type": "bubble",
-        "size": "kilo",
-        "header": {
-            "type": "box",
-            "layout": "vertical",
             "backgroundColor": "#1A365D",
             "paddingAll": "16px",
             "contents": [
                 {"type": "text", "text": f"⛵ {current_wind}風是誰？", "weight": "bold", "size": "lg", "color": "#FFFFFF"},
-                {"type": "text", "text": assigned_text, "size": "sm", "color": "#90CDF4", "margin": "sm", "wrap": True},
+                {"type": "text", "text": assigned_text, "size": "sm", "color": "#90CDF4", "wrap": True, "margin": "sm"},
             ],
         },
         "body": {"type": "box", "layout": "vertical", "spacing": "xs", "contents": buttons},

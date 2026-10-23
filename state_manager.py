@@ -2,15 +2,14 @@
 state_manager.py
 記帳對話狀態機。
 
-完整步驟流程（精簡版）：
+依風位逐一記錄，每位玩家一次問完：
   idle
     → /記帳
-    → select_players（按鈕選 4 人）
-    → enter_amounts（文字輸入前 3 位金額，第 4 位自動計算）
-    → assign_winds（按鈕指定東南西北，選完一個 →）
-    → enter_zimo_after_wind（QuickReply 問該玩家自摸，回來後繼續下一個風位）
-    → 前 3 人完畢後北風自動分配 →
-    → enter_last_zimo（QuickReply 問最後一人自摸）
+    → select_player（按鈕選「東風是誰」，可加訪客 → enter_visitor_name）
+    → enter_amount（文字輸入該玩家輸贏金額）
+    → enter_zimo（QuickReply 問該玩家自摸）
+    → 南、西風同上循環
+    → 北風選人後金額自動計算（四人合計為 0），只問自摸
     → confirming（確認卡）
     → 寫入 Sheets → idle
 """
@@ -24,28 +23,31 @@ WIND_ORDER = ["東", "南", "西", "北"]
 @dataclass
 class RecordState:
     user_id: str
-    step: str = "select_players"
+    step: str = "select_player"
     # step 可能值：
-    #   select_players | enter_visitor_name | enter_amounts
-    #   | assign_winds | enter_zimo_after_wind | enter_last_zimo | confirming
+    #   select_player | enter_visitor_name | enter_amount | enter_zimo | confirming
 
-    # ── 選人 ──
+    # 以下三個 list 皆依風位順序（東南西北）排列
     selected_players: list = field(default_factory=list)
-
-    # ── 金額 ──
     amounts: list = field(default_factory=list)
-    amount_idx: int = 0   # 目前要輸入第幾位（0-based），收到 3 筆後自動算第 4
+    zimos: list = field(default_factory=list)
 
-    # ── 風位 ──
-    winds: dict = field(default_factory=dict)   # {player_name: "東"|"南"|"西"|"北"}
-    wind_idx: int = 0                           # 已分配幾個風位（0~3）
+    @property
+    def current_idx(self) -> int:
+        """目前正在記錄的玩家（0-based），也就是 WIND_ORDER 的索引"""
+        return len(self.selected_players) - 1
 
-    # ── 自摸 ──
-    zimos: list = field(default_factory=lambda: [0, 0, 0, 0])  # 依 selected_players 順序
-    zimo_idx: int = 0                           # 保留相容
+    @property
+    def current_player(self) -> str:
+        return self.selected_players[-1] if self.selected_players else ""
 
-    # ── 風位+自摸交替流程 ──
-    pending_zimo_player: str = ""               # 目前待詢問自摸的玩家名字
+    @property
+    def current_wind(self) -> str:
+        return WIND_ORDER[self.current_idx]
+
+    @property
+    def next_wind(self) -> str:
+        return WIND_ORDER[len(self.selected_players)]
 
 
 # 全域狀態：{user_id: RecordState}

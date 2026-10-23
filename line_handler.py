@@ -2,11 +2,9 @@
 line_handler.py
 Line Webhook 事件處理。
 
-記帳完整流程（精簡版）：
-  /記帳 → 選人 → 輸金額 → 風位選人（選完後立即詢問該玩家自摸次數）→ 確認 → 儲存
-
-  精簡重點：原本「風位全選完 → 再逐一詢問自摸」現改為「選完某人風位，立刻問他自摸幾次」，
-  交替進行直到四人完畢，省去一整輪來回。
+記帳流程（依風位逐一記錄）：
+  /記帳 → 東風是誰 → 輸贏多少 → 自摸幾次 → 南風是誰 → … → 北風是誰（金額自動計算）→ 自摸幾次
+  → 確認 → 儲存
 """
 
 import logging
@@ -26,7 +24,7 @@ from awards import calculate_monthly_awards
 from flex_messages import (
     awards_flex, confirmation_flex, leaderboard_flex,
     monthly_trend_flex, personal_stats_flex, player_profile_flex,
-    player_selection_flex, wind_selection_flex, yearly_leaderboard_flex,
+    player_selection_flex, yearly_leaderboard_flex,
 )
 from sheets_client import (
     add_session, get_all_members, get_matchup_stats,
@@ -77,12 +75,10 @@ def _reply_flex(reply_token: str, alt_text: str, flex_dict: dict) -> None:
     line_bot_api.reply_message(reply_token, FlexSendMessage(alt_text=alt_text, contents=flex_dict))
 
 
-def _reply_zimo_prompt(reply_token: str, player_name: str, push_to: str = "") -> None:
-    """詢問指定玩家自摸次數（附快速回覆）
-    push_to: 若有提供 group_id 或 user_id，改用 push_message（reply_token 已被消耗時使用）
-    """
-    msg = TextSendMessage(
-        text=f"⚡ {player_name} 這場自摸幾次？",
+def _reply_zimo_prompt(reply_token: str, player_name: str, prefix: str = "") -> None:
+    """詢問指定玩家自摸次數（附快速回覆）"""
+    line_bot_api.reply_message(reply_token, TextSendMessage(
+        text=f"{prefix}⚡ {player_name} 這場自摸幾次？",
         quick_reply=QuickReply(items=[
             QuickReplyButton(action=PostbackAction(
                 label=f"{n}次",
@@ -91,11 +87,7 @@ def _reply_zimo_prompt(reply_token: str, player_name: str, push_to: str = "") ->
             ))
             for n in range(6)
         ]),
-    )
-    if push_to:
-        line_bot_api.push_message(push_to, msg)
-    else:
-        line_bot_api.reply_message(reply_token, msg)
+    ))
 
 
 # ──────────────────────────────────────
@@ -109,7 +101,7 @@ def _start_record(event, user_id: str) -> None:
         _reply_text(event.reply_token, "⚠️ 尚未有任何成員！\n請先用 /加入 <名字> 加入成員清單。")
         return
     create_state(user_id)
-    _reply_flex(event.reply_token, "選擇第 1 位玩家", player_selection_flex(members, [], 1))
+    _reply_flex(event.reply_token, "東風是誰？", player_selection_flex(members, []))
 
 
 def _show_rank(event, year: int | None = None, month: int | None = None) -> None:
@@ -278,63 +270,79 @@ def _show_help(event) -> None:
 
 
 # ──────────────────────────────────────
-# 狀態機：金額 → 風位+自摸交替
+# 狀態機：每個風位 選人 → 金額 → 自摸
 # ──────────────────────────────────────
 
-def _handle_amount_input(event, user_id: str, text: str, state: RecordState) -> None:
-    try:
-        amount = int(text.replace(",", "").replace("，", "").replace(" ", ""))
-    except ValueError:
-        player_name = state.selected_players[state.amount_idx]
-        _reply_text(event.reply_token, f"格式不對！請輸入數字，例如 +500 或 -300\n（目前輸入 {player_name} 的金額）")
-        return
+AMOUNT_RE = re.compile(r"(贏|輸|\+|-)?\s*(\d[\d,，]*)")
 
-    state.amounts.append(amount)
-    state.amount_idx += 1
 
-    if state.amount_idx >= len(state.selected_players) - 1:
-        # 自動計算第 4 位
-        state.amounts.append(-sum(state.amounts))
-        # 進入風位分配（wind_idx 追蹤已分配幾個風位）
-        state.step = "assign_winds"
-        state.winds = {}
-        state.wind_idx = 0
-        state.zimos = [0, 0, 0, 0]
-        state.pending_zimo_player = ""
-        _reply_flex(event.reply_token, "東風是誰？",
-                    wind_selection_flex(state.selected_players, state.winds, 0))
-    else:
-        next_name = state.selected_players[state.amount_idx]
-        is_last_manual = (state.amount_idx == len(state.selected_players) - 2)
-        hint = "（輸入後將自動計算最後一位玩家的金額）\n" if is_last_manual else ""
+def _parse_amount(text: str) -> int | None:
+    """支援 +500、-300、500、贏500、輸300"""
+    m = AMOUNT_RE.fullmatch(text.replace(" ", ""))
+    if not m:
+        return None
+    value = int(re.sub(r"[,，]", "", m.group(2)))
+    return -value if m.group(1) in {"輸", "-"} else value
+
+
+def _on_player_selected(event, state: RecordState, player: str) -> None:
+    """選好某風位的玩家：前三位問金額，北風自動算金額後直接問自摸"""
+    state.selected_players.append(player)
+    if len(state.selected_players) < 4:
+        state.step = "enter_amount"
         _reply_text(event.reply_token,
-                    f"📝 {next_name}（第 {state.amount_idx+1} 位）的輸贏金額？\n{hint}格式：+500 或 -300")
+                    f"💰 {state.current_wind}風 {player} 輸贏多少？\n格式：+500 / -300（或 贏500 / 輸300）")
+        return
+    last_amount = -sum(state.amounts)
+    state.amounts.append(last_amount)
+    state.step = "enter_zimo"
+    _reply_zimo_prompt(event.reply_token, player,
+                       prefix=f"🧮 北風 {player} 自動計算：{last_amount:+,}\n")
 
 
-def _handle_visitor_name(event, user_id: str, text: str, state: RecordState) -> None:
+def _handle_amount_input(event, text: str, state: RecordState) -> None:
+    amount = _parse_amount(text)
+    if amount is None:
+        _reply_text(event.reply_token,
+                    f"格式不對！請輸入數字，例如 +500 或 -300\n（目前輸入 {state.current_wind}風 {state.current_player} 的金額）")
+        return
+    state.amounts.append(amount)
+    state.step = "enter_zimo"
+    _reply_zimo_prompt(event.reply_token, state.current_player)
+
+
+def _handle_zimo_input(event, state: RecordState, count: int) -> None:
+    state.zimos.append(count)
+    if len(state.selected_players) < 4:
+        state.step = "select_player"
+        _reply_flex(event.reply_token, f"{state.next_wind}風是誰？",
+                    player_selection_flex(get_all_members(), state.selected_players))
+        return
+    state.step = "confirming"
+    _reply_flex(event.reply_token, "確認本場記錄", confirmation_flex(_build_players(state)))
+
+
+def _build_players(state: RecordState) -> list[dict]:
+    return [
+        {
+            "name": state.selected_players[i],
+            "amount": state.amounts[i],
+            "wind": WIND_ORDER[i],
+            "zimo": state.zimos[i],
+        }
+        for i in range(4)
+    ]
+
+
+def _handle_visitor_name(event, text: str, state: RecordState) -> None:
     visitor_name = text.strip()
     if not visitor_name or len(visitor_name) > 10:
         _reply_text(event.reply_token, "名字太長或為空，請重新輸入（最多 10 字）")
         return
-    state.selected_players.append(visitor_name)
-    if len(state.selected_players) >= 4:
-        _transition_to_amounts(event, user_id, state)
-    else:
-        state.step = "select_players"
-        members = get_all_members()
-        step_num = len(state.selected_players) + 1
-        _reply_flex(event.reply_token, f"選擇第 {step_num} 位玩家",
-                    player_selection_flex(members, state.selected_players, step_num))
-
-
-def _transition_to_amounts(event, user_id: str, state: RecordState) -> None:
-    state.step = "enter_amounts"
-    state.amounts = []
-    state.amount_idx = 0
-    first_name = state.selected_players[0]
-    players_text = "、".join(state.selected_players)
-    _reply_text(event.reply_token,
-                f"✅ 本場玩家：{players_text}\n\n📝 {first_name}（第 1 位）的輸贏金額？\n格式：+500 或 -300")
+    if visitor_name in state.selected_players:
+        _reply_text(event.reply_token, f"{visitor_name} 已經在本場了，請換個名字")
+        return
+    _on_player_selected(event, state, visitor_name)
 
 
 # ──────────────────────────────────────
@@ -352,98 +360,40 @@ def handle_postback(event):
     action = params.get("action")
     state = get_state(user_id)
 
-    # ── 選人 ──
+    # ── 選人（目前風位）──
     if action == "select_player":
-        if not state:
+        if not state or state.step != "select_player":
             _reply_text(event.reply_token, "操作逾時，請重新 /記帳")
             return
-        state.selected_players.append(params.get("player", ""))
-        if len(state.selected_players) >= 4:
-            _transition_to_amounts(event, user_id, state)
-        else:
-            members = get_all_members()
-            step_num = len(state.selected_players) + 1
-            _reply_flex(event.reply_token, f"選擇第 {step_num} 位玩家",
-                        player_selection_flex(members, state.selected_players, step_num))
+        player = params.get("player", "")
+        if player in state.selected_players:
+            return  # 重複點舊卡片，忽略
+        _on_player_selected(event, state, player)
 
     elif action == "add_visitor":
-        if not state:
+        if not state or state.step != "select_player":
             _reply_text(event.reply_token, "操作逾時，請重新 /記帳")
             return
         state.step = "enter_visitor_name"
-        _reply_text(event.reply_token, "請輸入訪客名字（不會存入成員清單）：")
+        _reply_text(event.reply_token, f"請輸入{state.next_wind}風訪客的名字（不會存入成員清單）：")
 
-    # ── 風位分配：選完後立即詢問自摸 ──
-    elif action == "assign_wind":
-        if not state or state.step != "assign_winds":
-            _reply_text(event.reply_token, "操作逾時，請重新 /記帳")
-            return
-        wind = params.get("wind", "")
-        player = params.get("player", "")
-        state.winds[player] = wind
-        state.pending_zimo_player = player
-        state.step = "enter_zimo_after_wind"
-        _reply_zimo_prompt(event.reply_token, player)
-
-    # ── 自摸次數（每選完一個風位後立即收，最後一人亦同）──
+    # ── 自摸次數 ──
     elif action == "set_zimo":
-        if not state or state.step not in {"enter_zimo_after_wind", "enter_last_zimo"}:
+        if not state or state.step != "enter_zimo":
             _reply_text(event.reply_token, "操作逾時，請重新 /記帳")
             return
         try:
             count = int(params.get("count", 0))
         except ValueError:
             count = 0
-
-        # 存入對應玩家的自摸
-        player = state.pending_zimo_player
-        if player in state.selected_players:
-            idx = state.selected_players.index(player)
-            state.zimos[idx] = count
-
-        if state.step == "enter_last_zimo":
-            # 四人風位+自摸全部收齊 → 確認卡
-            state.step = "confirming"
-            players = [
-                {
-                    "name": state.selected_players[i],
-                    "amount": state.amounts[i],
-                    "wind": state.winds.get(state.selected_players[i], ""),
-                    "zimo": state.zimos[i],
-                }
-                for i in range(4)
-            ]
-            _reply_flex(event.reply_token, "確認本場記錄", confirmation_flex(players))
-        else:
-            # enter_zimo_after_wind：前三人
-            state.wind_idx += 1
-            if state.wind_idx >= 3:
-                # 自動分配最後一個風位，再問最後一人自摸
-                last_player = next(p for p in state.selected_players if p not in state.winds)
-                state.winds[last_player] = WIND_ORDER[3]
-                state.pending_zimo_player = last_player
-                state.step = "enter_last_zimo"
-                _reply_zimo_prompt(event.reply_token, last_player)
-            else:
-                # 繼續下一個風位
-                state.step = "assign_winds"
-                _reply_flex(event.reply_token, f"{WIND_ORDER[state.wind_idx]}風是誰？",
-                            wind_selection_flex(state.selected_players, state.winds, state.wind_idx))
+        _handle_zimo_input(event, state, count)
 
     # ── 確認儲存 ──
     elif action == "confirm_record":
         if not state or state.step != "confirming":
             _reply_text(event.reply_token, "操作逾時，請重新 /記帳")
             return
-        players = [
-            {
-                "name": state.selected_players[i],
-                "amount": state.amounts[i],
-                "wind": state.winds.get(state.selected_players[i], ""),
-                "zimo": state.zimos[i] if i < len(state.zimos) else 0,
-            }
-            for i in range(4)
-        ]
+        players = _build_players(state)
         display_name = _get_display_name(event)
         gid = _get_group_id(event)
         session_id = add_session(players, display_name, gid)
@@ -552,44 +502,12 @@ def handle_message(event):
     # 狀態機：文字輸入
     state = get_state(user_id)
     if state:
-        if state.step == "enter_amounts":
-            _handle_amount_input(event, user_id, text, state); return
+        if state.step == "enter_amount":
+            _handle_amount_input(event, text, state); return
         if state.step == "enter_visitor_name":
-            _handle_visitor_name(event, user_id, text, state); return
-        if state.step in {"enter_zimo_after_wind", "enter_last_zimo"}:
-            try:
-                count = int(text.strip())
-                if count < 0:
-                    raise ValueError
-            except ValueError:
+            _handle_visitor_name(event, text, state); return
+        if state.step == "enter_zimo":
+            if not text.isdigit():
                 _reply_text(event.reply_token, "請輸入 0–5 的數字，例如：2")
                 return
-            player = state.pending_zimo_player
-            if player in state.selected_players:
-                idx = state.selected_players.index(player)
-                state.zimos[idx] = count
-            if state.step == "enter_last_zimo":
-                state.step = "confirming"
-                players = [
-                    {
-                        "name": state.selected_players[i],
-                        "amount": state.amounts[i],
-                        "wind": state.winds.get(state.selected_players[i], ""),
-                        "zimo": state.zimos[i],
-                    }
-                    for i in range(4)
-                ]
-                _reply_flex(event.reply_token, "確認本場記錄", confirmation_flex(players))
-            else:
-                state.wind_idx += 1
-                if state.wind_idx >= 3:
-                    last_player = next(p for p in state.selected_players if p not in state.winds)
-                    state.winds[last_player] = WIND_ORDER[3]
-                    state.pending_zimo_player = last_player
-                    state.step = "enter_last_zimo"
-                    _reply_zimo_prompt(event.reply_token, last_player)
-                else:
-                    state.step = "assign_winds"
-                    _reply_flex(event.reply_token, f"{WIND_ORDER[state.wind_idx]}風是誰？",
-                                wind_selection_flex(state.selected_players, state.winds, state.wind_idx))
-            return
+            _handle_zimo_input(event, state, int(text)); return

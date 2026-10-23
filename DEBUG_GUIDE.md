@@ -62,18 +62,16 @@ mahjong_bot/
 
 ```
 /記帳
- → select_players（選 4 人）
- → enter_amounts（前 3 人輸金額，第 4 人自動計算）
- → assign_winds（選東風是誰）
-   → enter_zimo_after_wind（問該玩家自摸，用 push_message）
-   → assign_winds（選南風）→ enter_zimo_after_wind
-   → assign_winds（選西風）→ enter_zimo_after_wind
-   → 自動分配北風 → enter_last_zimo（問北風自摸，用 push_message）
+ → select_player（東風是誰？按鈕選人，或 ➕訪客 → enter_visitor_name）
+ → enter_amount（輸入該玩家輸贏：+500 / -300 / 贏500 / 輸300）
+ → enter_zimo（快速回覆 0–5 次，或直接輸入數字）
+ → 南風、西風同上循環
+ → 北風選人後金額自動計算（四人合計為 0），只問自摸
  → confirming（確認卡）
  → 儲存 → 完成
 ```
 
-**重要**：自摸提示用 `push_message`（非 reply），因為 reply_token 在 postback 後已消耗。自摸支援快速回覆按鈕（0–5 次）或直接輸入數字。
+**重要**：每一步都用 reply 回覆（文字輸入或 postback 都會帶新的 reply_token）。`selected_players` / `amounts` / `zimos` 三個 list 都依東南西北順序排列。
 
 ---
 
