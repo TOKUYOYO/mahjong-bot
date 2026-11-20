@@ -2,7 +2,8 @@
 charts.py
 成員損益折線圖（PNG），由 main.py 的 /chart/trend.png 提供給 LINE 圖片訊息使用。
 
-X 軸為月份，Y 軸為年度「累計」輸贏；只畫 members 名單內的成員。
+/走勢       → 排名賽跑圖：每月月底依年度累計輸贏排名（members）
+/走勢 名字  → 月K線：開=月初累計、收=月底累計、高低=當月每場後的最高/最低累計，下方為場數
 圖片網址帶 HMAC 簽章，避免外人任意查詢群組資料。
 """
 
@@ -65,56 +66,199 @@ def trend_chart_url(year: int, gid: str, name: str = "", preview: bool = False) 
 
 # ── 繪圖 ──
 
-def render_trend_png(year: int, monthly_pnl: dict, last_month: int, preview: bool = False) -> bytes:
-    """
-    monthly_pnl = {name: [12 個月輸贏]}
-    last_month  = 畫到幾月（今年畫到本月，過去年份畫到 12 月）
-    """
-    months = list(range(1, last_month + 1))
-    # 依年度累計高到低排序，圖例順序與排名一致
-    series = []
-    for name, vals in monthly_pnl.items():
-        vals = vals[:last_month]
-        if not any(vals):
-            continue
-        cum, run = [], 0
-        for v in vals:
-            run += v
-            cum.append(run)
-        series.append((name, cum))
-    series.sort(key=lambda x: x[1][-1], reverse=True)
+# 台股慣例：紅漲綠跌
+UP = "#D62828"
+DOWN = "#1B8A3A"
+FLAT = "#A0AEC0"
+MA_COLOR = "#D69E2E"
+INK = "#1A365D"
 
-    w, h = (8, 5) if preview else (12, 7.5)
-    fig, ax = plt.subplots(figsize=(w, h), dpi=100 if preview else 150)
+
+def _fig(preview: bool, w: float, h: float, **kw):
+    scale = 0.68 if preview else 1
+    fig = plt.figure(figsize=(w * scale, h * scale), dpi=100 if preview else 150, **kw)
     fig.patch.set_facecolor("white")
+    return fig
 
-    if not series:
-        ax.text(0.5, 0.5, f"{year} 年尚無成員戰績", ha="center", va="center", fontsize=18,
-                transform=ax.transAxes, color="#718096")
-        ax.set_axis_off()
-    else:
-        for idx, (name, cum) in enumerate(series):
-            color = PALETTE[idx % len(PALETTE)]
-            label = f"{short_name(name)}  {cum[-1]:+,}"
-            ax.plot(months, cum, marker="o", markersize=4, linewidth=2.2, color=color, label=label)
 
-        ax.axhline(0, color="#A0AEC0", linewidth=1, zorder=0)
-        ax.set_xticks(months)
-        ax.set_xticklabels([f"{m}月" for m in months], fontsize=11)
-        ax.set_xlim(0.7, last_month + 0.3)
-        ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{v:+,.0f}" if v else "0"))
-        ax.tick_params(axis="y", labelsize=11)
-        ax.grid(axis="y", color="#EDF2F7", linewidth=1)
-        for side in ("top", "right"):
-            ax.spines[side].set_visible(False)
-        ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), frameon=False, fontsize=11,
-                  title="年度累計", title_fontsize=11)
-
-    title = f"{year} 年成員累計損益" if len(series) != 1 else f"{short_name(series[0][0])} {year} 年累計損益"
-    ax.set_title(title, fontsize=17, pad=14, loc="left", color="#1A365D")
-    fig.tight_layout()
-
+def _to_png(fig) -> bytes:
     buf = io.BytesIO()
     fig.savefig(buf, format="png", facecolor="white")
     plt.close(fig)
     return buf.getvalue()
+
+
+def _empty_png(text: str, preview: bool) -> bytes:
+    fig = _fig(preview, 10, 5)
+    ax = fig.add_subplot()
+    ax.text(0.5, 0.5, text, ha="center", va="center", fontsize=18, transform=ax.transAxes, color="#718096")
+    ax.set_axis_off()
+    return _to_png(fig)
+
+
+def _clean(ax):
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.spines["left"].set_color("#CBD5E0")
+    ax.spines["bottom"].set_color("#CBD5E0")
+
+
+# ── /走勢：排名賽跑圖（bump chart）──
+
+def render_rank_png(year: int, monthly_pnl: dict, last_month: int, preview: bool = False) -> bytes:
+    """
+    每月月底依「年度累計」排名，線條交叉＝超車。
+    monthly_pnl = {name: [12 個月輸贏]}；只畫今年有上桌的人。
+    """
+    months = list(range(1, last_month + 1))
+    cum = {}
+    for name, vals in monthly_pnl.items():
+        vals = vals[:last_month]
+        if not any(vals):
+            continue
+        run, c = 0, []
+        for v in vals:
+            run += v
+            c.append(run)
+        cum[name] = c
+    if not cum:
+        return _empty_png(f"{year} 年尚無成員戰績", preview)
+
+    names = list(cum)
+    ranks = {n: [] for n in names}
+    for mi in range(len(months)):
+        order = sorted(names, key=lambda n: (-cum[n][mi], n))
+        for r, n in enumerate(order, start=1):
+            ranks[n].append(r)
+    final_order = sorted(names, key=lambda n: ranks[n][-1])
+    n_players = len(names)
+
+    fig = _fig(preview, 13, 0.55 * n_players + 3)
+    ax = fig.add_subplot()
+    for idx, n in enumerate(final_order):
+        color = PALETTE[idx % len(PALETTE)]
+        ax.plot(months, ranks[n], color=color, linewidth=4, alpha=0.9, solid_capstyle="round", zorder=2)
+        ax.scatter(months, ranks[n], s=110, color=color, edgecolor="white", linewidth=2, zorder=3)
+        # 左側：1 月時的名字
+        ax.text(months[0] - 0.25, ranks[n][0], short_name(n), ha="right", va="center", fontsize=12, color=color)
+        # 右側：目前名次、名字、累計、與上月相比
+        delta = ranks[n][-2] - ranks[n][-1] if len(months) > 1 else 0
+        arrow = f"▲{delta}" if delta > 0 else (f"▼{-delta}" if delta < 0 else "—")
+        arrow_color = UP if delta > 0 else (DOWN if delta < 0 else FLAT)
+        ax.text(months[-1] + 0.25, ranks[n][-1], f"{short_name(n)}  {cum[n][-1]:+,}",
+                ha="left", va="center", fontsize=12, color=color, fontweight="bold")
+        ax.text(months[-1] + 2.05, ranks[n][-1], arrow, ha="left", va="center", fontsize=11, color=arrow_color)
+
+    ax.set_ylim(n_players + 0.6, 0.4)
+    ax.set_yticks(range(1, n_players + 1))
+    ax.set_yticklabels([str(r) for r in range(1, n_players + 1)], fontsize=11, color="#718096")
+    ax.set_xticks(months)
+    ax.set_xticklabels([f"{m}月" for m in months], fontsize=12)
+    ax.set_xlim(months[0] - 1.6, months[-1] + 2.6)
+    ax.tick_params(length=0)
+    for x in months:
+        ax.axvline(x, color="#EDF2F7", linewidth=1, zorder=0)
+    for side in ("top", "right", "left", "bottom"):
+        ax.spines[side].set_visible(False)
+    ax.set_title(f"{year} 年排名賽跑", fontsize=19, pad=28, loc="left", color=INK, fontweight="bold")
+    ax.text(0, 1.02, "每月月底依年度累計輸贏排名　·　線交叉＝超車　·　▲▼ 與上月比",
+            transform=ax.transAxes, fontsize=11, color="#718096")
+    fig.tight_layout()
+    return _to_png(fig)
+
+
+# ── /走勢 名字：月K線 ──
+
+def _monthly_candles(games: list[dict], last_month: int) -> list[dict | None]:
+    """依每場累計算出每月 開/高/低/收 與場數；沒打的月份為 None。"""
+    by_month: dict = {}
+    for g in games:
+        by_month.setdefault(int(g["date"][5:7]), []).append(g["amount"])
+    candles, run = [], 0
+    for m in range(1, last_month + 1):
+        amounts = by_month.get(m)
+        if not amounts:
+            candles.append(None)
+            continue
+        o, path = run, [run]
+        for a in amounts:
+            run += a
+            path.append(run)
+        candles.append({"open": o, "close": run, "high": max(path), "low": min(path), "games": len(amounts)})
+    return candles
+
+
+def render_kline_png(name: str, year: int, games: list[dict], last_month: int, preview: bool = False) -> bytes:
+    candles = _monthly_candles(games, last_month)
+    if not any(candles):
+        return _empty_png(f"{short_name(name)} {year} 年尚無戰績", preview)
+    months = list(range(1, last_month + 1))
+
+    fig = _fig(preview, 12, 8)
+    gs = fig.add_gridspec(2, 1, height_ratios=[3.2, 1], hspace=0.08)
+    ax = fig.add_subplot(gs[0])
+    axv = fig.add_subplot(gs[1], sharex=ax)
+
+    closes, level = [], 0
+    for m, c in zip(months, candles):
+        if c is None:
+            ax.hlines(level, m - 0.3, m + 0.3, color=FLAT, linewidth=1.5, linestyles=(0, (2, 2)))
+            closes.append(level)
+            continue
+        level = c["close"]
+        closes.append(level)
+        color = UP if c["close"] > c["open"] else (DOWN if c["close"] < c["open"] else FLAT)
+        ax.vlines(m, c["low"], c["high"], color=color, linewidth=1.6, zorder=2)
+        body_h = c["close"] - c["open"]
+        ax.bar(m, body_h if body_h else 1, bottom=c["open"], width=0.6, color=color,
+               edgecolor=color, linewidth=1.2, zorder=3)
+        axv.bar(m, c["games"], width=0.6, color=color, alpha=0.75)
+        axv.text(m, c["games"], str(c["games"]), ha="center", va="bottom", fontsize=9, color="#718096")
+
+    # 3 個月均線
+    ma = [sum(closes[i - 2:i + 1]) / 3 if i >= 2 else None for i in range(len(closes))]
+    ma_x = [m for m, v in zip(months, ma) if v is not None]
+    if ma_x:
+        ax.plot(ma_x, [v for v in ma if v is not None], color=MA_COLOR, linewidth=2, label="MA3（3個月均線）", zorder=4)
+        ax.legend(loc="upper left", frameon=False, fontsize=10)
+
+    ax.axhline(0, color="#A0AEC0", linewidth=1, linestyle="--", zorder=1)
+
+    # 標註年度最高 / 最低點
+    real = [(m, c) for m, c in zip(months, candles) if c]
+    hm, hc = max(real, key=lambda x: x[1]["high"])
+    lm, lc = min(real, key=lambda x: x[1]["low"])
+    span = max(hc["high"] - lc["low"], 1)
+    ax.annotate(f"最高 {hc['high']:+,}", (hm, hc["high"]), xytext=(0, 8), textcoords="offset points",
+                ha="center", fontsize=10, color=UP)
+    ax.annotate(f"最低 {lc['low']:+,}", (lm, lc["low"]), xytext=(0, -16), textcoords="offset points",
+                ha="center", fontsize=10, color=DOWN)
+    ax.set_ylim(lc["low"] - span * 0.12, hc["high"] + span * 0.12)
+
+    # 最新收盤
+    last_close = closes[-1]
+    ax.annotate(f"{last_close:+,}", (months[-1] + 0.4, last_close), ha="left", va="center", fontsize=11,
+                color="white", fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.3", fc=UP if last_close >= 0 else DOWN, ec="none"))
+
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{v:+,.0f}" if v else "0"))
+    ax.grid(axis="y", color="#EDF2F7", linewidth=1)
+    ax.tick_params(axis="x", labelbottom=False, length=0)
+    _clean(ax)
+    axv.set_xticks(months)
+    axv.set_xticklabels([f"{m}月" for m in months], fontsize=11)
+    axv.set_xlim(0.4, last_month + 1.1)
+    axv.set_ylabel("場數", fontsize=10, color="#718096")
+    axv.yaxis.set_major_locator(ticker.MaxNLocator(3, integer=True))
+    axv.set_ylim(0, max(c["games"] for _, c in real) * 1.35)
+    _clean(axv)
+
+    up_n = sum(1 for _, c in real if c["close"] > c["open"])
+    down_n = sum(1 for _, c in real if c["close"] < c["open"])
+    best = max(real, key=lambda x: x[1]["close"] - x[1]["open"])
+    ax.set_title(f"{short_name(name)}　{year} 年 月K線", fontsize=19, pad=30, loc="left", color=INK, fontweight="bold")
+    ax.text(0, 1.03, f"年度 {last_close:+,}　·　收紅 {up_n} 個月 / 收綠 {down_n} 個月　·　"
+                     f"最強月 {best[0]}月 {best[1]['close'] - best[1]['open']:+,}　·　影線＝當月最高/最低點",
+            transform=ax.transAxes, fontsize=11, color="#718096")
+    fig.subplots_adjust(left=0.09, right=0.95, top=0.88, bottom=0.07)
+    return _to_png(fig)

@@ -510,3 +510,28 @@ def get_members_monthly_pnl(year: int, group_id: str, names: list[str]) -> dict:
             if n in stats:
                 result[n][m - 1] = stats[n]["total"]
     return result
+
+
+def get_player_games(player_name: str, group_id: str, year: int) -> list[dict]:
+    """
+    某人某年每一場的輸贏（依日期、建立時間排序），供月K線用。
+    回傳：[{"date": "2026-01-03", "amount": int}, ...]
+    """
+    prefix = f"{year:04d}-"
+    games = []
+    for s in _get_all_sessions():
+        date = str(s.get("date", ""))
+        if not date.startswith(prefix):
+            continue
+        if group_id and str(s.get("group_id", "")) != group_id:
+            continue
+        for i in range(1, 5):
+            if str(s.get(f"p{i}_name", "")).strip() != player_name:
+                continue
+            try:
+                amount = int(s.get(f"p{i}_amount", 0))
+            except (ValueError, TypeError):
+                amount = 0
+            games.append({"date": date, "created_at": str(s.get("created_at", "")), "amount": amount})
+    games.sort(key=lambda g: (g["date"], g["created_at"]))
+    return [{"date": g["date"], "amount": g["amount"]} for g in games]

@@ -13,9 +13,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse, Response
 from linebot.exceptions import InvalidSignatureError
 
-from charts import render_trend_png, verify
+from charts import render_kline_png, render_rank_png, verify
 from line_handler import handler
-from sheets_client import get_all_members, get_members_monthly_pnl
+from sheets_client import get_all_members, get_members_monthly_pnl, get_player_games
 from scheduler import send_monthly_summary, start_scheduler
 
 logging.basicConfig(
@@ -73,7 +73,7 @@ CHART_CACHE_TTL = 300
 
 @app.get("/chart/trend.png")
 def chart_trend(year: int, gid: str = "", name: str = "", sig: str = "", preview: int = 0):
-    """成員累計損益折線圖（網址需帶 line_handler 產生的簽章）"""
+    """/走勢 圖片：無名字＝排名賽跑圖，有名字＝月K線（網址需帶 line_handler 產生的簽章）"""
     if not verify(year, gid, name, sig):
         raise HTTPException(status_code=403, detail="Invalid signature")
 
@@ -84,7 +84,9 @@ def chart_trend(year: int, gid: str = "", name: str = "", sig: str = "", preview
 
     now = datetime.now(pytz.timezone("Asia/Taipei"))
     last_month = now.month if year == now.year else 12
-    names = [name] if name else get_all_members()
-    png = render_trend_png(year, get_members_monthly_pnl(year, gid, names), last_month, bool(preview))
+    if name:
+        png = render_kline_png(name, year, get_player_games(name, gid, year), last_month, bool(preview))
+    else:
+        png = render_rank_png(year, get_members_monthly_pnl(year, gid, get_all_members()), last_month, bool(preview))
     _chart_cache[key] = (time.time(), png)
     return Response(png, media_type="image/png")
