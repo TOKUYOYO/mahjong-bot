@@ -3,7 +3,7 @@ charts.py
 成員損益折線圖（PNG），由 main.py 的 /chart/trend.png 提供給 LINE 圖片訊息使用。
 
 /走勢       → 排名賽跑圖：每月月底依年度累計輸贏排名（members）
-/走勢 名字  → 月K線：開=月初累計、收=月底累計、高低=當月每場後的最高/最低累計，下方為場數
+/走勢 名字  → 半月K線：每月分上半(1–15日)/下半(16日～月底)；開=期初累計、收=期末累計、高低=期內每場後的最高/最低累計，下方為場數
 圖片網址帶 HMAC 簽章，避免外人任意查詢群組資料。
 """
 
@@ -167,16 +167,27 @@ def render_rank_png(year: int, monthly_pnl: dict, last_month: int, preview: bool
     return _to_png(fig)
 
 
-# ── /走勢 名字：月K線 ──
+# ── /走勢 名字：半月K線 ──
+# 每月切兩期：上半月 1–15 日、下半月 16 日～月底（31 天的月份即 15 + 16 天）
 
-def _monthly_candles(games: list[dict], last_month: int) -> list[dict | None]:
-    """依每場累計算出每月 開/高/低/收 與場數；沒打的月份為 None。"""
-    by_month: dict = {}
+def half_month_index(month: int, day: int) -> int:
+    """1 月上半 = 1、1 月下半 = 2、…、12 月下半 = 24"""
+    return (month - 1) * 2 + (1 if day <= 15 else 2)
+
+
+def period_label(p: int) -> str:
+    return f"{(p + 1) // 2}月{'上' if p % 2 else '下'}"
+
+
+def _half_month_candles(games: list[dict], last_period: int) -> list[dict | None]:
+    """依每場累計算出每半月 開/高/低/收 與場數；沒打的期間為 None。"""
+    by_period: dict = {}
     for g in games:
-        by_month.setdefault(int(g["date"][5:7]), []).append(g["amount"])
+        p = half_month_index(int(g["date"][5:7]), int(g["date"][8:10]))
+        by_period.setdefault(p, []).append(g["amount"])
     candles, run = [], 0
-    for m in range(1, last_month + 1):
-        amounts = by_month.get(m)
+    for p in range(1, last_period + 1):
+        amounts = by_period.get(p)
         if not amounts:
             candles.append(None)
             continue
@@ -188,56 +199,63 @@ def _monthly_candles(games: list[dict], last_month: int) -> list[dict | None]:
     return candles
 
 
-def render_kline_png(name: str, year: int, games: list[dict], last_month: int, preview: bool = False) -> bytes:
-    candles = _monthly_candles(games, last_month)
+def render_kline_png(name: str, year: int, games: list[dict], last_period: int, preview: bool = False) -> bytes:
+    candles = _half_month_candles(games, last_period)
     if not any(candles):
         return _empty_png(f"{short_name(name)} {year} 年尚無戰績", preview)
-    months = list(range(1, last_month + 1))
+    periods = list(range(1, last_period + 1))
+    last_month = (last_period + 1) // 2
 
-    fig = _fig(preview, 12, 8)
+    fig = _fig(preview, 13, 8)
     gs = fig.add_gridspec(2, 1, height_ratios=[3.2, 1], hspace=0.08)
     ax = fig.add_subplot(gs[0])
     axv = fig.add_subplot(gs[1], sharex=ax)
 
+    # 月份分隔線（上下半月之間不畫）
+    for m in range(1, last_month):
+        for a in (ax, axv):
+            a.axvline(2 * m + 0.5, color="#E2E8F0", linewidth=1, zorder=0)
+
     closes, level = [], 0
-    for m, c in zip(months, candles):
+    for p, c in zip(periods, candles):
         if c is None:
-            ax.hlines(level, m - 0.3, m + 0.3, color=FLAT, linewidth=1.5, linestyles=(0, (2, 2)))
+            ax.hlines(level, p - 0.3, p + 0.3, color=FLAT, linewidth=1.5, linestyles=(0, (2, 2)))
             closes.append(level)
             continue
         level = c["close"]
         closes.append(level)
         color = UP if c["close"] > c["open"] else (DOWN if c["close"] < c["open"] else FLAT)
-        ax.vlines(m, c["low"], c["high"], color=color, linewidth=1.6, zorder=2)
+        ax.vlines(p, c["low"], c["high"], color=color, linewidth=1.5, zorder=2)
         body_h = c["close"] - c["open"]
-        ax.bar(m, body_h if body_h else 1, bottom=c["open"], width=0.6, color=color,
+        ax.bar(p, body_h if body_h else 1, bottom=c["open"], width=0.62, color=color,
                edgecolor=color, linewidth=1.2, zorder=3)
-        axv.bar(m, c["games"], width=0.6, color=color, alpha=0.75)
-        axv.text(m, c["games"], str(c["games"]), ha="center", va="bottom", fontsize=9, color="#718096")
+        axv.bar(p, c["games"], width=0.62, color=color, alpha=0.75)
+        axv.text(p, c["games"], str(c["games"]), ha="center", va="bottom", fontsize=8, color="#718096")
 
-    # 3 個月均線
-    ma = [sum(closes[i - 2:i + 1]) / 3 if i >= 2 else None for i in range(len(closes))]
-    ma_x = [m for m, v in zip(months, ma) if v is not None]
+    # 6 期均線（約 3 個月）
+    ma = [sum(closes[i - 5:i + 1]) / 6 if i >= 5 else None for i in range(len(closes))]
+    ma_x = [p for p, v in zip(periods, ma) if v is not None]
     if ma_x:
-        ax.plot(ma_x, [v for v in ma if v is not None], color=MA_COLOR, linewidth=2, label="MA3（3個月均線）", zorder=4)
+        ax.plot(ma_x, [v for v in ma if v is not None], color=MA_COLOR, linewidth=2,
+                label="MA6（6期≈3個月均線）", zorder=4)
         ax.legend(loc="upper left", frameon=False, fontsize=10)
 
     ax.axhline(0, color="#A0AEC0", linewidth=1, linestyle="--", zorder=1)
 
     # 標註年度最高 / 最低點
-    real = [(m, c) for m, c in zip(months, candles) if c]
-    hm, hc = max(real, key=lambda x: x[1]["high"])
-    lm, lc = min(real, key=lambda x: x[1]["low"])
+    real = [(p, c) for p, c in zip(periods, candles) if c]
+    hp, hc = max(real, key=lambda x: x[1]["high"])
+    lp, lc = min(real, key=lambda x: x[1]["low"])
     span = max(hc["high"] - lc["low"], 1)
-    ax.annotate(f"最高 {hc['high']:+,}", (hm, hc["high"]), xytext=(0, 8), textcoords="offset points",
+    ax.annotate(f"最高 {hc['high']:+,}", (hp, hc["high"]), xytext=(0, 8), textcoords="offset points",
                 ha="center", fontsize=10, color=UP)
-    ax.annotate(f"最低 {lc['low']:+,}", (lm, lc["low"]), xytext=(0, -16), textcoords="offset points",
+    ax.annotate(f"最低 {lc['low']:+,}", (lp, lc["low"]), xytext=(0, -16), textcoords="offset points",
                 ha="center", fontsize=10, color=DOWN)
     ax.set_ylim(lc["low"] - span * 0.12, hc["high"] + span * 0.12)
 
     # 最新收盤
     last_close = closes[-1]
-    ax.annotate(f"{last_close:+,}", (months[-1] + 0.4, last_close), ha="left", va="center", fontsize=11,
+    ax.annotate(f"{last_close:+,}", (periods[-1] + 0.6, last_close), ha="left", va="center", fontsize=11,
                 color="white", fontweight="bold",
                 bbox=dict(boxstyle="round,pad=0.3", fc=UP if last_close >= 0 else DOWN, ec="none"))
 
@@ -245,9 +263,14 @@ def render_kline_png(name: str, year: int, games: list[dict], last_month: int, p
     ax.grid(axis="y", color="#EDF2F7", linewidth=1)
     ax.tick_params(axis="x", labelbottom=False, length=0)
     _clean(ax)
-    axv.set_xticks(months)
-    axv.set_xticklabels([f"{m}月" for m in months], fontsize=11)
-    axv.set_xlim(0.4, last_month + 1.1)
+    # X 軸：每根 K 棒標「上/下」，月份標在兩根中間
+    axv.set_xticks(periods)
+    axv.set_xticklabels(["上" if p % 2 else "下" for p in periods], fontsize=8, color="#A0AEC0")
+    axv.tick_params(axis="x", length=0, pad=2)
+    for m in range(1, last_month + 1):
+        axv.text(2 * m - 0.5, -0.22, f"{m}月", transform=axv.get_xaxis_transform(),
+                 ha="center", va="top", fontsize=11)
+    axv.set_xlim(0.3, last_period + 1.6)
     axv.set_ylabel("場數", fontsize=10, color="#718096")
     axv.yaxis.set_major_locator(ticker.MaxNLocator(3, integer=True))
     axv.set_ylim(0, max(c["games"] for _, c in real) * 1.35)
@@ -256,9 +279,10 @@ def render_kline_png(name: str, year: int, games: list[dict], last_month: int, p
     up_n = sum(1 for _, c in real if c["close"] > c["open"])
     down_n = sum(1 for _, c in real if c["close"] < c["open"])
     best = max(real, key=lambda x: x[1]["close"] - x[1]["open"])
-    ax.set_title(f"{short_name(name)}　{year} 年 月K線", fontsize=19, pad=30, loc="left", color=INK, fontweight="bold")
-    ax.text(0, 1.03, f"年度 {last_close:+,}　·　收紅 {up_n} 個月 / 收綠 {down_n} 個月　·　"
-                     f"最強月 {best[0]}月 {best[1]['close'] - best[1]['open']:+,}　·　影線＝當月最高/最低點",
+    ax.set_title(f"{short_name(name)}　{year} 年 半月K線", fontsize=19, pad=30, loc="left", color=INK, fontweight="bold")
+    ax.text(0, 1.03, f"年度 {last_close:+,}　·　收紅 {up_n} 期 / 收綠 {down_n} 期　·　"
+                     f"最強 {period_label(best[0])}半月 {best[1]['close'] - best[1]['open']:+,}　·　"
+                     f"上半月 1–15 日、下半月 16 日～月底",
             transform=ax.transAxes, fontsize=11, color="#718096")
-    fig.subplots_adjust(left=0.09, right=0.95, top=0.88, bottom=0.07)
+    fig.subplots_adjust(left=0.08, right=0.95, top=0.88, bottom=0.1)
     return _to_png(fig)
