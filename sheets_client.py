@@ -372,8 +372,8 @@ def get_matchup_stats(player_name: str, group_id: str, recent_n: int = 50) -> di
 
 def get_player_wind_stats(player_name: str, group_id: str) -> dict:
     """
-    各風位下的平均 P&L。
-    回傳：{"東": {"sessions": N, "total": int, "avg": float}, ...}
+    各風位下的表現（只計有記風位的場次）。
+    回傳：{"東": {"sessions": N, "total": int, "zimo": int, "avg": float}, ...}
     """
     all_sessions = _get_all_sessions()
     wind_stats: dict = {}
@@ -388,11 +388,16 @@ def get_player_wind_stats(player_name: str, group_id: str) -> dict:
                 continue
             try:
                 amount = int(s.get(f"p{i}_amount", 0))
-            except:
+            except (ValueError, TypeError):
                 amount = 0
-            wind_stats.setdefault(wind, {"sessions": 0, "total": 0})
+            try:
+                zimo = int(s.get(f"p{i}_zimo", 0) or 0)
+            except (ValueError, TypeError):
+                zimo = 0
+            wind_stats.setdefault(wind, {"sessions": 0, "total": 0, "zimo": 0})
             wind_stats[wind]["sessions"] += 1
             wind_stats[wind]["total"] += amount
+            wind_stats[wind]["zimo"] += zimo
 
     for w in wind_stats:
         n = wind_stats[w]["sessions"]
@@ -475,4 +480,33 @@ def get_player_monthly_breakdown(player_name: str, group_id: str, year: int) -> 
         data = stats.get(player_name)
         if data:
             result.append({"month": m, "total": data["total"], "sessions": data["sessions"]})
+    return result
+
+
+def get_monthly_champions(year: int, group_id: str = "") -> list[dict]:
+    """
+    某年每個月的第一名（月排行榜冠軍，與 /排行 相同口徑，含訪客）。
+    回傳：[{"month": int, "player": str, "total": int, "sessions": int}, ...]，只含有資料的月份。
+    """
+    result = []
+    for m in range(1, 13):
+        stats = get_player_monthly_stats(year, m, group_id)
+        if not stats:
+            continue
+        name, data = max(stats.items(), key=lambda x: x[1]["total"])
+        result.append({"month": m, "player": name, "total": data["total"], "sessions": data["sessions"]})
+    return result
+
+
+def get_members_monthly_pnl(year: int, group_id: str, names: list[str]) -> dict:
+    """
+    指定玩家某年每月的輸贏。
+    回傳：{name: [1月, 2月, …, 12月]}（沒打的月份為 0）
+    """
+    result = {n: [0] * 12 for n in names}
+    for m in range(1, 13):
+        stats = get_player_monthly_stats(year, m, group_id)
+        for n in names:
+            if n in stats:
+                result[n][m - 1] = stats[n]["total"]
     return result

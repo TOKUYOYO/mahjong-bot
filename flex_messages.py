@@ -288,6 +288,65 @@ def awards_flex(awards: dict, year: int, month: int) -> dict:
 
 
 # ─────────────────────────────────────
+# 每月冠軍卡（/月冠軍 指令）
+# ─────────────────────────────────────
+
+def monthly_champions_flex(year: int, champions: list[dict], current_month: int | None = None) -> dict:
+    """
+    champions = [{"month": int, "player": str, "total": int, "sessions": int}, ...]
+    current_month：今年的本月（尚未結束，標示「進行中」）
+    """
+    rows = []
+    for c in champions:
+        ongoing = c["month"] == current_month
+        rows.append({
+            "type": "box", "layout": "horizontal",
+            "paddingTop": "6px", "paddingBottom": "6px",
+            "contents": [
+                {"type": "text", "text": f"{c['month']}月", "size": "sm", "color": "#555555", "flex": 2, "gravity": "center"},
+                {"type": "text", "text": f"👑 {c['player']}", "size": "sm", "weight": "bold", "color": "#2D3748",
+                 "flex": 6, "gravity": "center", "wrap": True},
+                {"type": "text", "text": f"+{c['total']:,}" if c["total"] > 0 else f"{c['total']:,}",
+                 "size": "sm", "weight": "bold", "color": "#0A7C59", "align": "end", "flex": 3, "gravity": "center"},
+            ],
+        })
+        if ongoing:
+            rows.append({"type": "text", "text": "（本月進行中，暫定）", "size": "xxs", "color": "#AAAAAA", "align": "end"})
+        rows.append({"type": "separator", "color": "#EEEEEE"})
+    if rows:
+        rows.pop()
+
+    # 冠軍次數（不計進行中的月份）
+    counts: dict = {}
+    for c in champions:
+        if c["month"] != current_month:
+            counts[c["player"]] = counts.get(c["player"], 0) + 1
+    footer = []
+    if counts:
+        top_n = max(counts.values())
+        kings = [p for p, n in counts.items() if n == top_n]
+        footer = [
+            {"type": "separator", "margin": "md"},
+            {"type": "text", "text": f"🏆 最多冠軍：{'、'.join(kings)}（{top_n} 次）",
+             "size": "sm", "weight": "bold", "color": "#744210", "margin": "md", "wrap": True},
+        ]
+
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": "#744210", "paddingAll": "16px",
+            "contents": [
+                {"type": "text", "text": f"👑 {year}年 每月冠軍", "weight": "bold", "size": "xl", "color": "#FFFFFF"},
+                {"type": "text", "text": "各月排行第一名（當月總贏最多）", "size": "sm", "color": "#FBD38D", "margin": "sm"},
+            ],
+        },
+        "body": {"type": "box", "layout": "vertical", "paddingAll": "14px", "contents": rows + footer},
+    }
+
+
+# ─────────────────────────────────────
 # 逐月趨勢卡（/逐月 指令）
 # ─────────────────────────────────────
 
@@ -442,6 +501,7 @@ def player_profile_flex(data: dict) -> dict:
         "best_wind_avg": float,
         "best_wind_sessions": int,
         "best_session": {"date": str, "amount": int, "wind": str} | None,
+        "wind_stats": {"東": {"sessions": int, "total": int, "zimo": int}, ...},
         "monthly_breakdown": [{"month": int, "total": int, "sessions": int}, ...],
     }
     """
@@ -554,6 +614,50 @@ def player_profile_flex(data: dict) -> dict:
             "type": "text", "text": "🌀 擅長風位：（資料不足）",
             "size": "sm", "color": "#AAAAAA", "margin": "sm",
         })
+
+    # ── 各風位表現 ──
+    wind_stats = data.get("wind_stats") or {}
+    if wind_stats:
+        body_contents.append({"type": "separator", "margin": "lg"})
+        body_contents.append({
+            "type": "text", "text": "🧭 各風位表現",
+            "size": "sm", "weight": "bold", "color": "#2D3748", "margin": "lg",
+        })
+
+        def _cell(text, flex, **kw):
+            return {"type": "text", "text": text, "size": "xs", "flex": flex, "align": "end", **kw}
+
+        body_contents.append({
+            "type": "box", "layout": "horizontal", "margin": "sm",
+            "contents": [
+                {"type": "text", "text": "風位", "size": "xxs", "color": "#AAAAAA", "flex": 2},
+                _cell("場次", 2, color="#AAAAAA", size="xxs"),
+                _cell("自摸", 2, color="#AAAAAA", size="xxs"),
+                _cell("營收", 4, color="#AAAAAA", size="xxs"),
+            ],
+        })
+        for w in WIND_ORDER:
+            ws = wind_stats.get(w)
+            if not ws:
+                body_contents.append({
+                    "type": "box", "layout": "horizontal", "paddingTop": "3px", "paddingBottom": "3px",
+                    "contents": [
+                        {"type": "text", "text": f"{w}風", "size": "xs", "color": "#555555", "flex": 2},
+                        _cell("—", 2, color="#CBD5E0"), _cell("—", 2, color="#CBD5E0"), _cell("—", 4, color="#CBD5E0"),
+                    ],
+                })
+                continue
+            t = ws["total"]
+            color = "#0A7C59" if t > 0 else ("#C53030" if t < 0 else "#888888")
+            body_contents.append({
+                "type": "box", "layout": "horizontal", "paddingTop": "3px", "paddingBottom": "3px",
+                "contents": [
+                    {"type": "text", "text": f"{w}風", "size": "xs", "color": "#555555", "flex": 2},
+                    _cell(f"{ws['sessions']}", 2, color="#555555"),
+                    _cell(f"{ws['zimo']}次", 2, color="#555555"),
+                    _cell(f"{t:+,}" if t else "0", 4, color=color, weight="bold"),
+                ],
+            })
 
     # ── 逐月輸贏 ──
     monthly = data.get("monthly_breakdown", [])

@@ -8,6 +8,13 @@ LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
 LINE_GROUP_ID = os.getenv("LINE_GROUP_ID", "")  # 月結推播用
 
+# ── 對外網址（圖表圖片用；Render 會自動提供 RENDER_EXTERNAL_URL）──
+PUBLIC_BASE_URL = (
+    os.getenv("PUBLIC_BASE_URL")
+    or os.getenv("RENDER_EXTERNAL_URL")
+    or "https://mahjong-bot-uila.onrender.com"
+)
+
 # ── Google Sheets ──
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON", "")

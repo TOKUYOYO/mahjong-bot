@@ -14,16 +14,17 @@ from datetime import datetime
 import pytz
 from linebot import LineBotApi, WebhookHandler
 from linebot.models import (
-    FlexSendMessage, MessageEvent, PostbackEvent,
+    FlexSendMessage, ImageSendMessage, MessageEvent, PostbackEvent,
     QuickReply, QuickReplyButton, PostbackAction,
     TextMessage, TextSendMessage,
 )
 
 from config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
 from awards import calculate_monthly_awards
+from charts import trend_chart_url
 from flex_messages import (
     awards_flex, confirmation_flex, leaderboard_flex,
-    monthly_trend_flex, personal_stats_flex, player_profile_flex,
+    monthly_champions_flex, monthly_trend_flex, personal_stats_flex, player_profile_flex,
     player_selection_flex, yearly_leaderboard_flex,
 )
 from sheets_client import (
@@ -32,7 +33,8 @@ from sheets_client import (
     get_player_monthly_stats, get_yearly_stats,
     get_player_wind_stats, register_member, get_member_avatar,
     get_best_single_session, get_yearly_leaderboard,
-    get_player_monthly_breakdown,
+    get_player_monthly_breakdown, get_monthly_champions,
+    get_members_monthly_pnl,
 )
 from state_manager import WIND_ORDER, RecordState, clear_state, create_state, get_state
 
@@ -121,8 +123,9 @@ def _show_yearly_rank(event, year: int | None = None) -> None:
     year = year or now.year
     gid = _get_group_id(event)
     stats = get_yearly_leaderboard(year, gid)
-    # 場次少於 5 場的不列入
-    stats = {k: v for k, v in stats.items() if v["sessions"] >= 5}
+    # 只列 members 名單內、且場次 5 場以上的人（月排行仍保留訪客）
+    members_set = set(get_all_members())
+    stats = {k: v for k, v in stats.items() if k in members_set and v["sessions"] >= 5}
     if not stats:
         _reply_text(event.reply_token, f"📊 {year}年尚無戰績記錄！")
         return
@@ -142,6 +145,40 @@ def _show_monthly_trend(event, query_name: str, year: int | None = None) -> None
         f"{query_name} {year}年逐月",
         monthly_trend_flex(query_name, year, monthly_data),
     )
+
+
+def _show_monthly_champions(event, year: int | None = None) -> None:
+    now = datetime.now(TW_TZ)
+    year = year or now.year
+    champions = get_monthly_champions(year, _get_group_id(event))
+    if not champions:
+        _reply_text(event.reply_token, f"👑 {year}年尚無戰績記錄！")
+        return
+    current = now.month if year == now.year else None
+    _reply_flex(event.reply_token, f"{year}年每月冠軍", monthly_champions_flex(year, champions, current))
+
+
+def _show_pnl_chart(event, name: str = "", year: int | None = None) -> None:
+    now = datetime.now(TW_TZ)
+    year = year or now.year
+    gid = _get_group_id(event)
+    members = get_all_members()
+    if name:
+        # 允許只打名字不打地區：/走勢 閻芝霖
+        matches = [m for m in members if m == name] or [m for m in members if m.startswith(name)]
+        if len(matches) != 1:
+            _reply_text(event.reply_token, f"找不到成員「{name}」，或名字不只一位符合。\n（走勢圖只限成員名單）")
+            return
+        name = matches[0]
+    names = [name] if name else members
+    pnl = get_members_monthly_pnl(year, gid, names)
+    if not any(any(v) for v in pnl.values()):
+        _reply_text(event.reply_token, f"📈 {name or '成員'} {year}年尚無戰績記錄！")
+        return
+    line_bot_api.reply_message(event.reply_token, ImageSendMessage(
+        original_content_url=trend_chart_url(year, gid, name),
+        preview_image_url=trend_chart_url(year, gid, name, preview=True),
+    ))
 
 
 def _show_awards(event, year: int | None = None, month: int | None = None) -> None:
@@ -231,6 +268,7 @@ def _show_player_profile(event, query_name: str) -> None:
         "best_wind": best_wind,
         "best_wind_avg": valid_winds[best_wind]["avg"] if best_wind else 0,
         "best_wind_sessions": valid_winds[best_wind]["sessions"] if best_wind else 0,
+        "wind_stats": wind_stats,
         "monthly_breakdown": monthly_breakdown,
     }
     _reply_flex(event.reply_token, f"{query_name} 個人頁面", player_profile_flex(profile_data))
@@ -258,6 +296,10 @@ def _show_help(event) -> None:
         "/年排行　　　今年年度排行\n"
         "/年排行 2025　查指定年度排行\n"
         "/逐月 [名字]　個人逐月戰績\n"
+        "/走勢　　　　成員累計損益折線圖\n"
+        "/走勢 [名字]　個人損益折線圖\n"
+        "/月冠軍　　　今年每月第一名\n"
+        "/月冠軍 2025　查指定年度每月第一名\n"
         "/頒獎　　　　本月英雄榜\n"
         "/頒獎 9　　　查9月英雄榜\n"
         "/頒獎 2025 9　查指定年月英雄榜\n"
@@ -457,6 +499,16 @@ def handle_message(event):
         except (ValueError, TypeError):
             _reply_text(event.reply_token, "格式：/年排行 2025")
         return
+
+    if re.fullmatch(r"/?月冠軍[\s\d年]*", text):
+        nums = [int(n) for n in re.findall(r"\d+", text)]
+        _show_monthly_champions(event, year=nums[0] if nums else None); return
+
+    if text in {"/走勢", "走勢"} or text.startswith("/走勢 ") or text.startswith("走勢 "):
+        parts = text.split()[1:]
+        year = next((int(p) for p in parts if p.isdigit()), None)
+        name = " ".join(p for p in parts if not p.isdigit())
+        _show_pnl_chart(event, name, year); return
 
     if text.startswith("/逐月") or text.startswith("逐月 "):
         parts = text.split()
